@@ -19,7 +19,7 @@
   "links": [],
   "panels": [
     {
-      "datasource": "Prometheus",
+      "datasource": "PrometheusETL",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -89,7 +89,7 @@
       "type": "timeseries"
     },
     {
-      "datasource": "Prometheus",
+      "datasource": "PrometheusETL",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -140,7 +140,7 @@
       "pluginVersion": "8.0.0",
       "targets": [
         {
-          "expr": "(sum(pg_stat_activity_count{datname=\"milan_telecom\"}) / on() pg_settings_max_connections) * 100",
+          "expr": "(sum(pg_stat_activity_count{datname=~\"${database}\"}) / on() pg_settings_max_connections) * 100",
           "refId": "A"
         }
       ],
@@ -148,7 +148,7 @@
       "type": "gauge"
     },
     {
-      "datasource": "Prometheus",
+      "datasource": "PrometheusETL",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -209,12 +209,12 @@
       "pluginVersion": "8.0.0",
       "targets": [
         {
-          "expr": "rate(pg_stat_database_xact_commit{datname=\"milan_telecom\"}[5m])",
+          "expr": "rate(pg_stat_database_xact_commit{datname=~\"${database}\"}[5m])",
           "refId": "A",
           "legendFormat": "Commits"
         },
         {
-          "expr": "rate(pg_stat_database_xact_rollback{datname=\"milan_telecom\"}[5m])",
+          "expr": "rate(pg_stat_database_xact_rollback{datname=~\"${database}\"}[5m])",
           "refId": "B",
           "legendFormat": "Rollbacks"
         }
@@ -223,7 +223,7 @@
       "type": "timeseries"
     },
     {
-      "datasource": "Prometheus",
+      "datasource": "PrometheusETL",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -284,17 +284,17 @@
       "pluginVersion": "8.0.0",
       "targets": [
         {
-          "expr": "rate(pg_stat_database_tup_inserted{datname=\"milan_telecom\"}[5m])",
+          "expr": "rate(pg_stat_database_tup_inserted{datname=~\"${database}\"}[5m])",
           "refId": "A",
           "legendFormat": "Inserts"
         },
         {
-          "expr": "rate(pg_stat_database_tup_updated{datname=\"milan_telecom\"}[5m])",
+          "expr": "rate(pg_stat_database_tup_updated{datname=~\"${database}\"}[5m])",
           "refId": "B",
           "legendFormat": "Updates"
         },
         {
-          "expr": "rate(pg_stat_database_tup_deleted{datname=\"milan_telecom\"}[5m])",
+          "expr": "rate(pg_stat_database_tup_deleted{datname=~\"${database}\"}[5m])",
           "refId": "C",
           "legendFormat": "Deletes"
         }
@@ -303,7 +303,7 @@
       "type": "timeseries"
     },
     {
-      "datasource": "Prometheus",
+      "datasource": "PrometheusETL",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -364,12 +364,12 @@
       "pluginVersion": "8.0.0",
       "targets": [
         {
-          "expr": "pg_stat_database_blks_hit{datname=\"milan_telecom\"}",
+          "expr": "pg_stat_database_blks_hit{datname=~\"${database}\"}",
           "refId": "A",
           "legendFormat": "Cache Hits"
         },
         {
-          "expr": "pg_stat_database_blks_read{datname=\"milan_telecom\"}",
+          "expr": "pg_stat_database_blks_read{datname=~\"${database}\"}",
           "refId": "B",
           "legendFormat": "Disk Reads"
         }
@@ -378,7 +378,7 @@
       "type": "timeseries"
     },
     {
-      "datasource": "Prometheus",
+      "datasource": "PrometheusETL",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -429,7 +429,7 @@
       "pluginVersion": "8.0.0",
       "targets": [
         {
-          "expr": "100 * (pg_stat_database_blks_hit{datname=\"milan_telecom\"} / (pg_stat_database_blks_hit{datname=\"milan_telecom\"} + pg_stat_database_blks_read{datname=\"milan_telecom\"}))",
+          "expr": "100 * (pg_stat_database_blks_hit{datname=~\"${database}\"} / (pg_stat_database_blks_hit{datname=~\"${database}\"} + pg_stat_database_blks_read{datname=~\"${database}\"}))",
           "refId": "A"
         }
       ],
@@ -437,7 +437,7 @@
       "type": "gauge"
     },
     {
-      "datasource": "Prometheus",
+      "datasource": "PrometheusETL",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -498,7 +498,7 @@
       "pluginVersion": "8.0.0",
       "targets": [
         {
-          "expr": "pg_database_size_bytes{datname=\"milan_telecom\"}",
+          "expr": "pg_database_size_bytes{datname=~\"${database}\"}",
           "refId": "A",
           "legendFormat": "Database Size"
         }
@@ -512,7 +512,32 @@
   "style": "dark",
   "tags": ["postgresql", "database"],
   "templating": {
-    "list": []
+    "list": [
+      {
+        "current": {
+          "selected": false,
+          "text": "milan_telecom",
+          "value": "milan_telecom"
+        },
+        "datasource": "PrometheusETL",
+        "definition": "label_values(pg_database_size_bytes, datname)",
+        "hide": 0,
+        "includeAll": false,
+        "label": "Database",
+        "multi": false,
+        "name": "database",
+        "options": [],
+        "query": {
+          "query": "label_values(pg_database_size_bytes, datname)",
+          "refId": "PrometheusVariableQuery"
+        },
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
   },
   "time": {
     "from": "now-1h",

@@ -12,3 +12,9 @@ scrape_configs:
       - targets: ['postgres-exporter:9187']
         labels:
           database: 'milan_telecom'
+
+  - job_name: 'airflow-statsd'
+    static_configs:
+      - targets: ['airflow-statsd-exporter:9102']
+        labels:
+          service: 'airflow'

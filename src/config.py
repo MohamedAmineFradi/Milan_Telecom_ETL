@@ -17,6 +17,7 @@ DATA_DIR = Path(os.getenv('DATA_DIR', BASE_DIR / 'data_milan_cdr_kaggle'))
 
 MILANO_GRID_FILE = DATA_DIR / 'milano-grid.geojson'
 PROVINCES_FILE = DATA_DIR / 'Italian_provinces.geojson'
+ISTAT_FILE = DATA_DIR / 'ISTAT_census_variables_2011.csv'
 
 TRAFFIC_PATTERN = 'sms-call-internet-mi-*.csv'
 MOBILITY_PATTERN = 'mi-to-provinces-*.csv'

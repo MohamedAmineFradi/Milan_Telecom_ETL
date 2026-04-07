@@ -1,4 +1,5 @@
 import psycopg2
+from psycopg2 import sql
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 from sqlalchemy import create_engine
 import logging
@@ -22,33 +23,30 @@ def get_sqlalchemy_engine():
 
 def create_database():
     try:
-        conn = psycopg2.connect(
+        with psycopg2.connect(
             dbname='postgres',
             user=DB_CONFIG['user'],
             password=DB_CONFIG['password'],
             host=DB_CONFIG['host'],
             port=DB_CONFIG['port']
-        )
-        conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
-        cursor = conn.cursor()
-        
-        cursor.execute(f"SELECT 1 FROM pg_database WHERE datname = '{DB_CONFIG['dbname']}'")
-        if not cursor.fetchone():
-            cursor.execute(f"CREATE DATABASE {DB_CONFIG['dbname']}")
-            logger.info(f"Database '{DB_CONFIG['dbname']}' created")
-        else:
-            logger.info(f"Database '{DB_CONFIG['dbname']}' already exists")
-        
-        cursor.close()
-        conn.close()
-        
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("CREATE EXTENSION IF NOT EXISTS postgis")
-        conn.commit()
-        logger.info("PostGIS extension enabled")
-        cursor.close()
-        conn.close()
+        ) as conn:
+            conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT 1 FROM pg_database WHERE datname = %s", (DB_CONFIG['dbname'],))
+                if not cursor.fetchone():
+                    cursor.execute(
+                        sql.SQL("CREATE DATABASE {}")
+                        .format(sql.Identifier(DB_CONFIG['dbname']))
+                    )
+                    logger.info(f"Database '{DB_CONFIG['dbname']}' created")
+                else:
+                    logger.info(f"Database '{DB_CONFIG['dbname']}' already exists")
+
+        with get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("CREATE EXTENSION IF NOT EXISTS postgis")
+                conn.commit()
+                logger.info("PostGIS extension enabled")
         
     except Exception as e:
         logger.error(f"Database creation error: {e}")
@@ -95,8 +93,30 @@ def create_schema(drop_existing: bool = False):
         cell_id INTEGER NOT NULL REFERENCES dim_grid_milan(cell_id),
         provincia VARCHAR(50) NOT NULL REFERENCES dim_provinces_it(provincia),
         cell2province NUMERIC DEFAULT 0 NOT NULL CHECK (cell2province >= 0),
-        province2cell NUMERIC DEFAULT 0 NOT NULL CHECK (province2cell >= 0)
+        province2cell NUMERIC DEFAULT 0 NOT NULL CHECK (province2cell >= 0),
+        CONSTRAINT uq_fact_mobility_keys UNIQUE (datetime, cell_id, provincia)
     );
+
+    -- Ensure uniqueness can be added safely on pre-existing tables.
+    DELETE FROM fact_mobility_provinces a
+    USING fact_mobility_provinces b
+    WHERE a.ctid < b.ctid
+      AND a.datetime = b.datetime
+      AND a.cell_id = b.cell_id
+      AND a.provincia = b.provincia;
+
+    DO $$
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1
+            FROM pg_constraint
+            WHERE conname = 'uq_fact_mobility_keys'
+        ) THEN
+            ALTER TABLE fact_mobility_provinces
+            ADD CONSTRAINT uq_fact_mobility_keys UNIQUE (datetime, cell_id, provincia);
+        END IF;
+    END
+    $$;
 
     CREATE OR REPLACE VIEW v_hourly_traffic AS
     SELECT 

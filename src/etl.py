@@ -1,11 +1,169 @@
 import geopandas as gpd
 import pandas as pd
 import logging
-from .config import DATA_DIR, MILANO_GRID_FILE, PROVINCES_FILE, TRAFFIC_PATTERN, MOBILITY_PATTERN, TARGET_CRS
+import unicodedata
+import uuid
+from sqlalchemy import text
+from .config import DATA_DIR, MILANO_GRID_FILE, PROVINCES_FILE, ISTAT_FILE, TRAFFIC_PATTERN, MOBILITY_PATTERN, TARGET_CRS
 from .database import get_sqlalchemy_engine
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+def _upsert_traffic_dataframe(df: pd.DataFrame, conn) -> int:
+    if df.empty:
+        return 0
+
+    # Prevent ON CONFLICT cardinality errors if source has duplicate keys.
+    df = df.drop_duplicates(subset=['datetime', 'cell_id', 'countrycode'], keep='last')
+
+    tmp_table = f"tmp_fact_traffic_{uuid.uuid4().hex[:8]}"
+    conn.execute(text(f"CREATE TEMP TABLE {tmp_table} (LIKE fact_traffic_milan INCLUDING DEFAULTS) ON COMMIT DROP"))
+    df.to_sql(tmp_table, conn, if_exists='append', index=False, chunksize=1000)
+
+    result = conn.execute(
+        text(
+            f"""
+            INSERT INTO fact_traffic_milan (
+                datetime, cell_id, countrycode, smsin, smsout, callin, callout, internet
+            )
+            SELECT
+                datetime, cell_id, countrycode, smsin, smsout, callin, callout, internet
+            FROM {tmp_table}
+            ON CONFLICT (datetime, cell_id, countrycode)
+            DO UPDATE SET
+                smsin = EXCLUDED.smsin,
+                smsout = EXCLUDED.smsout,
+                callin = EXCLUDED.callin,
+                callout = EXCLUDED.callout,
+                internet = EXCLUDED.internet
+            """
+        )
+    )
+    return int(result.rowcount or 0)
+
+
+def _upsert_mobility_dataframe(df: pd.DataFrame, conn) -> int:
+    if df.empty:
+        return 0
+
+    # Keep one row per natural key before upsert.
+    df = df.drop_duplicates(subset=['datetime', 'cell_id', 'provincia'], keep='last')
+
+    tmp_table = f"tmp_fact_mobility_{uuid.uuid4().hex[:8]}"
+    conn.execute(text(f"CREATE TEMP TABLE {tmp_table} (LIKE fact_mobility_provinces INCLUDING DEFAULTS) ON COMMIT DROP"))
+    df.to_sql(tmp_table, conn, if_exists='append', index=False, chunksize=1000)
+
+    result = conn.execute(
+        text(
+            f"""
+            INSERT INTO fact_mobility_provinces (
+                datetime, cell_id, provincia, cell2province, province2cell
+            )
+            SELECT
+                datetime, cell_id, provincia, cell2province, province2cell
+            FROM {tmp_table}
+            ON CONFLICT (datetime, cell_id, provincia)
+            DO UPDATE SET
+                cell2province = EXCLUDED.cell2province,
+                province2cell = EXCLUDED.province2cell
+            """
+        )
+    )
+    return int(result.rowcount or 0)
+
+
+def _normalize_province_name(name: str) -> str:
+    if not isinstance(name, str):
+        return ""
+
+    normalized = unicodedata.normalize("NFKD", name)
+    normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    normalized = normalized.replace("’", "'")
+    normalized = normalized.replace("`", "'")
+    normalized = normalized.replace("-", "-")
+    normalized = " ".join(normalized.strip().split()).title()
+    aliases = {
+        "Valle D'Aosta/Vallee D'Aoste": "Aosta",
+        "Valle D'Aosta/Vallée D'Aoste": "Aosta",
+        "Valle D'Aosta": "Aosta",
+        "Valle D'Aoste": "Aosta",
+        "Monza E Della Brianza": "Monza e della Brianza",
+        "Reggio Nell'Emilia": "Reggio nell'Emilia",
+        "Reggio Di Calabria": "Reggio di Calabria",
+        "Pesaro E Urbino": "Pesaro e Urbino",
+        "Massa-Carrara": "Massa Carrara",
+        "Forli'-Cesena": "Forli'-Cesena",
+        "Forli-Cesena": "Forli'-Cesena",
+        "Forli Cesena": "Forli'-Cesena",
+        "Forlì-Cesena": "Forli'-Cesena",
+        "Bolzano/Bozen": "Bolzano",
+    }
+    return aliases.get(normalized, normalized)
+
+
+def _load_istat_population() -> pd.DataFrame:
+    if not ISTAT_FILE.exists():
+        logger.warning(f"ISTAT file not found: {ISTAT_FILE}")
+        return pd.DataFrame(columns=['provincia_norm', 'population'])
+
+    istat_df = pd.read_csv(ISTAT_FILE, usecols=['PROVINCIA', 'P1'])
+    istat_df = istat_df.rename(columns={'PROVINCIA': 'provincia', 'P1': 'population'})
+    istat_df['provincia'] = istat_df['provincia'].astype(str).str.strip()
+    istat_df['population'] = pd.to_numeric(istat_df['population'], errors='coerce')
+    istat_df = istat_df.dropna(subset=['provincia', 'population'])
+    istat_df['population'] = istat_df['population'].astype(int)
+    istat_df['provincia_norm'] = istat_df['provincia'].apply(_normalize_province_name)
+    istat_df = istat_df.drop_duplicates(subset=['provincia_norm'], keep='first')
+    return istat_df[['provincia_norm', 'population']]
+
+
+def sync_province_population_from_istat(engine=None) -> int:
+    engine = engine or get_sqlalchemy_engine()
+    istat_population = _load_istat_population()
+
+    if istat_population.empty:
+        logger.warning("No ISTAT population data loaded; skipping population sync")
+        return 0
+
+    provinces_df = pd.read_sql("SELECT provincia, population FROM dim_provinces_it", engine)
+    if provinces_df.empty:
+        logger.info("No provinces in dim_provinces_it yet; skipping population sync")
+        return 0
+
+    provinces_df['provincia_norm'] = provinces_df['provincia'].apply(_normalize_province_name)
+    merged = provinces_df.merge(
+        istat_population,
+        on='provincia_norm',
+        how='left',
+        suffixes=('_db', '_istat')
+    )
+
+    updates = merged.dropna(subset=['population_istat']).copy()
+    updates['population_db'] = pd.to_numeric(updates['population_db'], errors='coerce').fillna(-1).astype(int)
+    updates['population_istat'] = updates['population_istat'].astype(int)
+    updates = updates[updates['population_db'] != updates['population_istat']]
+
+    if updates.empty:
+        logger.info("Province population already synchronized with ISTAT P1")
+        return 0
+
+    with engine.begin() as conn:
+        for row in updates.itertuples(index=False):
+            conn.execute(
+                text(
+                    """
+                    UPDATE dim_provinces_it
+                    SET population = :population
+                    WHERE provincia = :provincia
+                    """
+                ),
+                {'population': int(row.population_istat), 'provincia': row.provincia}
+            )
+
+    logger.info(f"✓ Updated {len(updates)} province populations from ISTAT P1")
+    return int(len(updates))
 
 
 def load_grid_geometries():
@@ -18,7 +176,6 @@ def load_grid_geometries():
         if existing_count > 0:
             logger.info(f"✓ {existing_count} grid cells already loaded (skipping new load)")
             # Backfill bounds if they are missing
-            from sqlalchemy import text
             with engine.begin() as conn:
                 conn.execute(text(
                     """
@@ -64,6 +221,7 @@ def load_provinces_geometries():
         
         if existing_count > 0:
             logger.info(f"✓ {existing_count} provinces already loaded (skipping)")
+            sync_province_population_from_istat(engine)
             return
         
         gdf = gpd.read_file(PROVINCES_FILE)
@@ -80,6 +238,25 @@ def load_provinces_geometries():
             gdf['population'] = pd.to_numeric(gdf['population'], errors='coerce').fillna(0).astype(int)
         else:
             gdf['population'] = 0
+
+        istat_population = _load_istat_population()
+        if not istat_population.empty:
+            gdf['provincia_norm'] = gdf['provincia'].apply(_normalize_province_name)
+            gdf = gdf.merge(
+                istat_population,
+                on='provincia_norm',
+                how='left',
+                suffixes=('_geojson', '_istat')
+            )
+            gdf['population'] = (
+                gdf['population_istat']
+                .fillna(gdf['population_geojson'])
+                .fillna(0)
+                .astype(int)
+            )
+            gdf = gdf.drop(columns=['population_geojson', 'population_istat', 'provincia_norm'])
+        else:
+            logger.warning("Could not enrich provinces with ISTAT P1 population")
         
         gdf[['provincia', 'geometry', 'population']].to_postgis(
             'dim_provinces_it',
@@ -98,15 +275,6 @@ def load_provinces_geometries():
 def load_traffic_data(file_pattern=None, limit_files=None):
     try:
         engine = get_sqlalchemy_engine()
-
-        existing_count = pd.read_sql(
-            "SELECT COUNT(*) as count FROM fact_traffic_milan",
-            engine
-        ).iloc[0]['count']
-
-        if existing_count > 0:
-            logger.info(f"✓ {existing_count} traffic rows already loaded (skipping)")
-            return
 
         pattern = file_pattern or TRAFFIC_PATTERN
         csv_files = sorted(DATA_DIR.glob(pattern))
@@ -168,16 +336,11 @@ def load_traffic_data(file_pattern=None, limit_files=None):
                     'invalid_cells': invalid_cells
                 })
             
-            df.to_sql(
-                'fact_traffic_milan',
-                engine,
-                if_exists='append',
-                index=False,
-                chunksize=1000
-            )
-            total_rows += len(df)
+            with engine.begin() as conn:
+                written = _upsert_traffic_dataframe(df, conn)
+            total_rows += written
         
-        logger.info(f"✓ {total_rows} traffic rows loaded from {len(csv_files)} files")
+        logger.info(f"✓ {total_rows} traffic rows upserted from {len(csv_files)} files")
         if rejected_rows:
             total_rejected = sum(r['rejected'] for r in rejected_rows)
             logger.info(f"⚠ {total_rejected} total rows were rejected during cleaning")
@@ -190,15 +353,6 @@ def load_traffic_data(file_pattern=None, limit_files=None):
 def load_mobility_data(file_pattern=None, limit_files=None):
     try:
         engine = get_sqlalchemy_engine()
-
-        existing_count = pd.read_sql(
-            "SELECT COUNT(*) as count FROM fact_mobility_provinces",
-            engine
-        ).iloc[0]['count']
-
-        if existing_count > 0:
-            logger.info(f"✓ {existing_count} mobility rows already loaded (skipping)")
-            return
 
         pattern = file_pattern or MOBILITY_PATTERN
         csv_files = sorted(DATA_DIR.glob(pattern))
@@ -264,16 +418,11 @@ def load_mobility_data(file_pattern=None, limit_files=None):
             
             df = df[df['cell_id'].between(0, 9999)]
             
-            df.to_sql(
-                'fact_mobility_provinces',
-                engine,
-                if_exists='append',
-                index=False,
-                chunksize=100
-            )
-            total_rows += len(df)
+            with engine.begin() as conn:
+                written = _upsert_mobility_dataframe(df, conn)
+            total_rows += written
         
-        logger.info(f"✓ {total_rows} mobility rows loaded from {len(csv_files)} files")
+        logger.info(f"✓ {total_rows} mobility rows upserted from {len(csv_files)} files")
         
     except Exception as e:
         logger.error(f"Mobility data loading error: {e}")

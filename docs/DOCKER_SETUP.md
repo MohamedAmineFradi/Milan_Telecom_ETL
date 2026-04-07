@@ -46,6 +46,30 @@ docker-compose logs -f postgres
 
 ## Usage
 
+### Start Airflow orchestration
+```bash
+# Initialize Airflow metadata and admin user
+docker compose up --build airflow-init
+
+# Start Airflow services
+docker compose up -d airflow-webserver airflow-scheduler
+```
+
+Airflow UI:
+- URL: http://localhost:8080
+- DAG: `milan_telecom_etl`
+
+Trigger the DAG manually from UI or CLI:
+```bash
+docker compose exec airflow-webserver airflow dags trigger milan_telecom_etl
+```
+
+See Airflow logs:
+```bash
+docker compose logs -f airflow-webserver
+docker compose logs -f airflow-scheduler
+```
+
 ### Run the full ETL pipeline
 ```bash
 docker-compose up
@@ -82,11 +106,15 @@ Edit environment variables in `docker-compose.yml` or create a `.env` file:
 
 ```env
 DB_NAME=milan_telecom
+AIRFLOW_DB_NAME=airflow
 DB_USER=postgres
 DB_PASSWORD=postgres
 DB_HOST=postgres
 DB_PORT=5432
 ```
+
+`DB_NAME` is used by the ETL pipeline tables.
+`AIRFLOW_DB_NAME` is used only by Airflow metadata tables and is created automatically by `airflow-init`.
 
 ## Data Volumes
 - **postgres_data**: PostgreSQL data (persists between restarts)

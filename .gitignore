@@ -49,3 +49,6 @@ data_milan_cdr_kaggle/
 # OS
 .DS_Store
 Thumbs.db
+
+.venv/
+venv/

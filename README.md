@@ -67,6 +67,28 @@ telecom_milan_etl/
 
 ## 💻 Utilisation
 
+### Orchestration avec Airflow
+
+Le projet inclut maintenant une orchestration Airflow (LocalExecutor) pour planifier et superviser le pipeline ETL.
+
+```bash
+docker compose up --build airflow-init
+docker compose up -d airflow-webserver airflow-scheduler postgres
+```
+
+Interface Airflow:
+- URL: http://localhost:8080
+- Utilisateur: `admin` (ou `AIRFLOW_ADMIN_USER`)
+- Mot de passe: `admin` (ou `AIRFLOW_ADMIN_PASSWORD`)
+
+Le DAG principal est `milan_telecom_etl` avec la chaîne de tâches suivante:
+1. setup_database
+2. load_grid_geometries + load_provinces_geometries (parallèle)
+3. load_traffic_data + load_mobility_data (parallèle)
+4. validate_top_cells
+
+Le service `etl` reste disponible pour les exécutions manuelles ponctuelles.
+
 ### Pipeline complet (recommandé pour la première fois)
 
 ```bash

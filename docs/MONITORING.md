@@ -7,12 +7,20 @@ This project includes a complete monitoring stack for PostgreSQL database using 
 - **Grafana**: Visualization and dashboarding (Port 3000)
 - **Prometheus**: Metrics collection and storage (Port 9090)
 - **Postgres Exporter**: PostgreSQL metrics exporter (Port 9187)
+- **StatsD Exporter**: Airflow metrics bridge from StatsD to Prometheus (Port 9102 internal)
 
 ## Quick Start
 
 1. Start all services:
 ```bash
 docker-compose up -d
+```
+
+If Prometheus starts with a `queries.active: permission denied` error, run the one-time init service or the helper script first:
+```bash
+docker compose up prometheus-init
+# or
+./setup-volumes.sh
 ```
 
 2. Access Grafana:
@@ -23,6 +31,37 @@ docker-compose up -d
 3. Access Prometheus (optional):
    - URL: http://localhost:9090
    - Check targets: http://localhost:9090/targets
+   - Verify target `airflow-statsd` is `UP`
+
+4. Access Airflow orchestration:
+   - URL: http://localhost:8080
+   - Verify DAG `milan_telecom_etl` is healthy and scheduled
+
+5. Access Airflow observability dashboard:
+   - URL: http://localhost:3000
+   - Dashboard: `Airflow Orchestration`
+
+## Airflow Operational Checks
+
+- Check scheduler heartbeat:
+```bash
+docker compose logs airflow-scheduler | tail -n 50
+```
+
+- Check webserver health:
+```bash
+curl -f http://localhost:8080/health
+```
+
+- Inspect recent DAG runs:
+```bash
+docker compose exec airflow-webserver airflow dags list-runs -d milan_telecom_etl
+```
+
+- Check Airflow metrics target in Prometheus:
+```bash
+curl -s http://localhost:9090/api/v1/targets | grep airflow-statsd
+```
 
 ## Available Metrics
 

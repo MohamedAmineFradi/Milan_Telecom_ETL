@@ -25,6 +25,9 @@ echo " Setting Prometheus permissions..."
 sudo chown -R 65534:65534 ./volumes/prometheus_data
 sudo chmod -R 755 ./volumes/prometheus_data
 
+# Prometheus requires write access to queries.active and TSDB files
+sudo chmod 755 ./volumes/prometheus_data
+
 # Set permissions for Grafana (UID 472)
 echo " Setting Grafana permissions..."
 sudo chown -R 472:472 ./volumes/grafana_data
@@ -37,5 +40,5 @@ echo "Verify with:"
 echo "  ls -la ./volumes/"
 echo ""
 echo "Next steps:"
-echo "  1. docker-compose down -v   (optional, to clean old state)"
-echo "  2. docker-compose up --build"
+echo "  1. docker compose down -v   (optional, to clean old state)"
+echo "  2. docker compose up --build"

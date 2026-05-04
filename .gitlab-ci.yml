@@ -37,7 +37,7 @@ test-dags:
       --show-source
       --statistics
     - black --check dags/
-    - for dag in dags/*.py; do python -c "from airflow.models import DagBag; DagBag('$dag', include_examples=False).raise_if_errors()"; done
+    - for dag in dags/*.py; do python -c "from airflow.models import DagBag; dagbag = DagBag('$dag', include_examples=False); dagbag.dagbag_stats; exit(1 if dagbag.import_errors else 0)"; done
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 

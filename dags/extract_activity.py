@@ -282,6 +282,7 @@ with DAG(
     fetch_data >> [load_grid, load_provinces]
 
     setup_db >> [load_traffic, load_mobility]
-    [load_grid, load_provinces] >> [load_traffic, load_mobility]
+    for geom_task in [load_grid, load_provinces]:
+        geom_task >> [load_traffic, load_mobility]
 
     chain([load_traffic, load_mobility], data_quality_checks, validate_top_cells)

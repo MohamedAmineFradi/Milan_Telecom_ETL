@@ -24,12 +24,11 @@ test-dags:
     - pip install -r requirements.txt
     - pip install apache-airflow-providers-ssh apache-airflow-providers-postgres flake8 black
   script:
-    # Linting
     - flake8 dags/ --count --select=E9,F63,F7,F82 --show-source --statistics
     - black --check dags/
-    # Validation syntaxe Airflow
-    - for dag in dags/*.py; do
-        python -c "from airflow.models import DagBag; DagBag('$dag', include_examples=False).raise_if_errors()";
+    - |
+      for dag in dags/*.py; do
+        python -c "from airflow.models import DagBag; DagBag('$dag', include_examples=False).raise_if_errors()"
       done
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
@@ -55,7 +54,7 @@ build-airflow-image:
     - docker build -f Dockerfile.airflow -t "$IMAGE_NAME:$CI_COMMIT_SHA" -t "$IMAGE_NAME:latest" .
     - docker push "$IMAGE_NAME:$CI_COMMIT_SHA"
     - docker push "$IMAGE_NAME:latest"
-    - echo " Image Airflow poussée : $IMAGE_NAME:latest"
+    - echo "Image Airflow poussée : $IMAGE_NAME:latest"
 
 # ─────────────────────────────────────
 # ÉTAPE 3: Déploiement sur Azure VM
@@ -75,46 +74,45 @@ deploy-to-azure-vm:
     - ssh-keyscan -H $AZURE_ETL_VM_IP >> ~/.ssh/known_hosts
   script:
     - |
-      echo " Déploiement ETL sur $AZURE_ETL_VM_IP..."
+      echo "Déploiement ETL sur $AZURE_ETL_VM_IP..."
       
-      # 1. Synchroniser les fichiers du projet (DAGs, config, etc.)
+      # 1. Synchroniser les fichiers du projet
       rsync -avz --delete \
         -e "ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no" \
         dags/ src/ main.py requirements.txt prometheus.yml grafana/ \
         azureuser@$AZURE_ETL_VM_IP:/home/azureuser/milan-etl/
       
-      # 2. Générer le .env pour docker-compose.azure.yml
-      ssh -i ~/.ssh/id_rsa azureuser@$AZURE_ETL_VM_IP "
-        cd /home/azureuser/milan-etl &&
-        cat > .env << ENV
-CI_REGISTRY_IMAGE=$CI_REGISTRY_IMAGE
-AZURE_DB_HOST=$AZURE_DB_HOST
-AIRFLOW_DB_USER=$AIRFLOW_DB_USER
-AIRFLOW_DB_PASSWORD=$AIRFLOW_DB_PASSWORD
+      # 2. Générer le .env via echo (évite le heredoc YAML-problématique)
+      ssh -i ~/.ssh/id_rsa azureuser@$AZURE_ETL_VM_IP "bash -s" << 'REMOTEOF'
+        cd /home/azureuser/milan-etl
+        cat > .env << EOF
+CI_REGISTRY_IMAGE=${CI_REGISTRY_IMAGE}
+AZURE_DB_HOST=${AZURE_DB_HOST}
+AIRFLOW_DB_USER=${AIRFLOW_DB_USER}
+AIRFLOW_DB_PASSWORD=${AIRFLOW_DB_PASSWORD}
 AIRFLOW_DB_NAME=airflow_metadata
-DB_USER=$DB_USER
-DB_PASSWORD=$DB_PASSWORD
+DB_USER=${DB_USER}
+DB_PASSWORD=${DB_PASSWORD}
 DB_NAME=milan_telecom
 GRAFANA_PASSWORD=admin
-ENV
-      "
+EOF
+REMOTEOF
       
       # 3. Login Docker Registry sur la VM
-      ssh -i ~/.ssh/id_rsa azureuser@$AZURE_ETL_VM_IP "
-        echo \"$CI_REGISTRY_PASSWORD\" | sudo docker login $CI_REGISTRY -u \"$CI_REGISTRY_USER\" --password-stdin
-      "
+      ssh -i ~/.ssh/id_rsa azureuser@$AZURE_ETL_VM_IP \
+        "echo \"\$CI_REGISTRY_PASSWORD\" | sudo docker login $CI_REGISTRY -u \"$CI_REGISTRY_USER\" --password-stdin"
       
       # 4. Démarrer/mettre à jour la stack ETL
-      ssh -i ~/.ssh/id_rsa azureuser@$AZURE_ETL_VM_IP "
-        cd /home/azureuser/milan-etl &&
-        sudo docker compose -f docker-compose.azure.yml pull &&
-        sudo docker compose -f docker-compose.azure.yml up -d &&
-        sleep 30 &&
-        curl -f http://localhost:8080/health || echo ' Airflow webserver not ready yet'
-      "
+      ssh -i ~/.ssh/id_rsa azureuser@$AZURE_ETL_VM_IP "bash -s" << 'REMOTEOF'
+        cd /home/azureuser/milan-etl
+        sudo docker compose -f docker-compose.azure.yml pull
+        sudo docker compose -f docker-compose.azure.yml up -d
+        sleep 30
+        curl -f http://localhost:8080/health || echo "Airflow webserver not ready yet"
+REMOTEOF
       
-      echo " Déploiement ETL terminé !"
-      echo "📍 Airflow UI : http://$AZURE_ETL_VM_IP:8080"
+      echo "Déploiement ETL terminé !"
+      echo "Airflow UI : http://$AZURE_ETL_VM_IP:8080"
   environment:
     name: production-etl
     url: http://$AZURE_ETL_VM_IP:8080

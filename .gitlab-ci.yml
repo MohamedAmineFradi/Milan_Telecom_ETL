@@ -61,13 +61,16 @@ build-airflow-image:
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
   before_script:
-    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    - >
+      echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER"
+      --password-stdin "$CI_REGISTRY"
   script:
-    - IMAGE_NAME="$CI_REGISTRY_IMAGE/airflow"
-    - docker build -f Dockerfile.airflow -t "$IMAGE_NAME:$CI_COMMIT_SHA" -t "$IMAGE_NAME:latest" .
-    - docker push "$IMAGE_NAME:$CI_COMMIT_SHA"
-    - docker push "$IMAGE_NAME:latest"
-    - echo "Image Airflow poussée: $IMAGE_NAME:latest"
+    - |
+      IMAGE_NAME="$CI_REGISTRY_IMAGE/airflow"
+      docker build -f Dockerfile.airflow -t "$IMAGE_NAME:$CI_COMMIT_SHA" -t "$IMAGE_NAME:latest" .
+      docker push "$IMAGE_NAME:$CI_COMMIT_SHA"
+      docker push "$IMAGE_NAME:latest"
+      echo "Image Airflow poussée: $IMAGE_NAME:latest"
 
 # ─────────────────────────────────────
 # ÉTAPE 3: Déploiement sur Azure VM

@@ -39,7 +39,7 @@ test-dags:
     - black --check dags/
     - >
       for dag in dags/*.py; do
-        /bin/python3 -c
+        python -c
         "from airflow.models import DagBag;
         DagBag('$dag', include_examples=False).raise_if_errors()";
       done

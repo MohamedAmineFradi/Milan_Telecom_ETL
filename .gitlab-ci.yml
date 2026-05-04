@@ -78,7 +78,7 @@ deploy-to-azure-vm:
   needs:
     - build-airflow-image
   before_script:
-    - apk add --no-cache openssh-client curl jq
+    - apk add --no-cache openssh-client curl jq rsync
     - mkdir -p ~/.ssh
     - "echo \"$AZURE_SSH_PRIVATE_KEY\" > ~/.ssh/id_rsa"
     - chmod 600 ~/.ssh/id_rsa

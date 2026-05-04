@@ -1,4 +1,3 @@
----
 # .gitlab-ci.yml - Milan_Telecom_ETL
 workflow:
   rules:
@@ -23,27 +22,11 @@ test-dags:
   stage: test
   before_script:
     - pip install -r requirements.txt
-    - |
-      pip install apache-airflow-providers-ssh \
-        apache-airflow-providers-postgres \
-        flake8 \
-        black
+    - pip install apache-airflow-providers-ssh apache-airflow-providers-postgres flake8 black
   script:
-    - |
-      flake8 dags/ \
-        --count \
-        --select=E9,F63,F7,F82 \
-        --show-source \
-        --statistics
+    - flake8 dags/ --count --select=E9,F63,F7,F82 --show-source --statistics
     - black --check dags/
-    - |
-      for dag in dags/*.py; do
-        python - <<PY
-      from airflow.models import DagBag
-
-      DagBag("$dag", include_examples=False).raise_if_errors()
-      PY
-      done
+    - "for dag in dags/*.py; do python -c \"from airflow.models import DagBag; DagBag('$dag', include_examples=False).raise_if_errors()\"; done"
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
@@ -62,20 +45,13 @@ build-airflow-image:
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
   before_script:
-    - |
-      echo "$CI_REGISTRY_PASSWORD" |
-        docker login -u "$CI_REGISTRY_USER" \
-        --password-stdin "$CI_REGISTRY"
+    - "echo \"$CI_REGISTRY_PASSWORD\" | docker login -u \"$CI_REGISTRY_USER\" --password-stdin \"$CI_REGISTRY\""
   script:
-    - IMAGE_NAME="$CI_REGISTRY_IMAGE/airflow"
-    - >
-      docker build -f Dockerfile.airflow
-      -t "$IMAGE_NAME:$CI_COMMIT_SHA"
-      -t "$IMAGE_NAME:latest"
-      .
-    - docker push "$IMAGE_NAME:$CI_COMMIT_SHA"
-    - docker push "$IMAGE_NAME:latest"
-    - echo "Image Airflow poussée: $IMAGE_NAME:latest"
+    - "IMAGE_NAME=\"$CI_REGISTRY_IMAGE/airflow\""
+    - "docker build -f Dockerfile.airflow -t \"$IMAGE_NAME:$CI_COMMIT_SHA\" -t \"$IMAGE_NAME:latest\" ."
+    - "docker push \"$IMAGE_NAME:$CI_COMMIT_SHA\""
+    - "docker push \"$IMAGE_NAME:latest\""
+    - "echo \"Image Airflow poussée: $IMAGE_NAME:latest\""
 
 # ─────────────────────────────────────
 # ÉTAPE 3: Déploiement sur Azure VM
@@ -90,55 +66,22 @@ deploy-to-azure-vm:
   before_script:
     - apk add --no-cache openssh-client curl jq
     - mkdir -p ~/.ssh
-    - echo "$AZURE_SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+    - "echo \"$AZURE_SSH_PRIVATE_KEY\" > ~/.ssh/id_rsa"
     - chmod 600 ~/.ssh/id_rsa
-    - ssh-keyscan -H $AZURE_ETL_VM_IP >> ~/.ssh/known_hosts
+    - "ssh-keyscan -H $AZURE_ETL_VM_IP >> ~/.ssh/known_hosts"
   script:
-    - |
-      echo "Déploiement ETL sur $AZURE_ETL_VM_IP..."
-
-      # 1. Synchroniser les fichiers du projet
-      rsync -avz --delete \
-        -e "ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no" \
-        dags/ src/ main.py requirements.txt prometheus.yml grafana/ \
-        azureuser@$AZURE_ETL_VM_IP:/home/azureuser/milan-etl/
-
-      # 2. Générer le .env via echo (évite le heredoc YAML-problématique)
-      ssh -i ~/.ssh/id_rsa azureuser@$AZURE_ETL_VM_IP "bash -s" << 'REMOTEOF'
-        cd /home/azureuser/milan-etl
-        cat > .env << EOF
-        CI_REGISTRY_IMAGE=${CI_REGISTRY_IMAGE}
-        AZURE_DB_HOST=${AZURE_DB_HOST}
-        AIRFLOW_DB_USER=${AIRFLOW_DB_USER}
-        AIRFLOW_DB_PASSWORD=${AIRFLOW_DB_PASSWORD}
-        AIRFLOW_DB_NAME=airflow_metadata
-        DB_USER=${DB_USER}
-        DB_PASSWORD=${DB_PASSWORD}
-        DB_NAME=milan_telecom
-        GRAFANA_PASSWORD=admin
-        EOF
-      REMOTEOF
-
-      # 3. Login Docker Registry sur la VM
-      ssh -i ~/.ssh/id_rsa azureuser@$AZURE_ETL_VM_IP "bash -s" << 'REMOTEOF'
-        echo "$CI_REGISTRY_PASSWORD" |
-          sudo docker login -u "$CI_REGISTRY_USER" \
-          --password-stdin "$CI_REGISTRY"
-      REMOTEOF
-
-      # 4. Démarrer/mettre à jour la stack ETL
-      ssh -i ~/.ssh/id_rsa azureuser@$AZURE_ETL_VM_IP "bash -s" << 'REMOTEOF'
-        cd /home/azureuser/milan-etl
-        sudo docker compose -f docker-compose.azure.yml pull
-        sudo docker compose -f docker-compose.azure.yml up -d
-        sleep 30
-        if ! curl -f http://localhost:8080/health; then
-          echo "Airflow webserver not ready yet"
-        fi
-      REMOTEOF
-
-      echo "Déploiement ETL terminé !"
-      echo "Airflow UI : http://$AZURE_ETL_VM_IP:8080"
+    - "echo \"Déploiement ETL sur $AZURE_ETL_VM_IP...\""
+    # 1. Synchroniser les fichiers du projet
+    - "rsync -avz --delete -e \"ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no\" dags/ src/ main.py requirements.txt prometheus.yml grafana/ azureuser@$AZURE_ETL_VM_IP:/home/azureuser/milan-etl/"
+    # 2. Générer le .env sur la VM distante (sans heredoc YAML-problématique)
+    - "ssh -i ~/.ssh/id_rsa azureuser@$AZURE_ETL_VM_IP \"cd /home/azureuser/milan-etl && printf '%s\\n' 'CI_REGISTRY_IMAGE=$CI_REGISTRY_IMAGE' 'AZURE_DB_HOST=$AZURE_DB_HOST' 'AIRFLOW_DB_USER=$AIRFLOW_DB_USER' 'AIRFLOW_DB_PASSWORD=$AIRFLOW_DB_PASSWORD' 'AIRFLOW_DB_NAME=airflow_metadata' 'DB_USER=$DB_USER' 'DB_PASSWORD=$DB_PASSWORD' 'DB_NAME=milan_telecom' 'GRAFANA_PASSWORD=admin' > .env\""
+    # 3. Login Docker Registry sur la VM
+    - "ssh -i ~/.ssh/id_rsa azureuser@$AZURE_ETL_VM_IP \"echo \\\"$CI_REGISTRY_PASSWORD\\\" | sudo docker login $CI_REGISTRY -u \\\"$CI_REGISTRY_USER\\\" --password-stdin\""
+    # 4. Démarrer/mettre à jour la stack ETL
+    - "ssh -i ~/.ssh/id_rsa azureuser@$AZURE_ETL_VM_IP \"cd /home/azureuser/milan-etl && sudo docker compose -f docker-compose.azure.yml pull && sudo docker compose -f docker-compose.azure.yml up -d && sleep 30 && curl -f http://localhost:8080/health || echo 'Airflow webserver not ready yet'\""
+    - "echo \"Déploiement ETL terminé !\""
+    - "echo \"Airflow UI : http://$AZURE_ETL_VM_IP:8080\""
   environment:
     name: production-etl
-    url: http://$AZURE_ETL_VM_IP:8080
+    url: "http://$AZURE_ETL_VM_IP:8080"
+    

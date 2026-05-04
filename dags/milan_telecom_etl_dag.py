@@ -31,7 +31,9 @@ def data_quality_checks_task() -> None:
 
     with engine.begin() as conn:
         for table_name, min_expected in critical_counts.items():
-            count = conn.execute(text(f"SELECT COUNT(*) FROM {table_name}")).scalar_one()
+            count = conn.execute(
+                text(f"SELECT COUNT(*) FROM {table_name}")
+            ).scalar_one()
             if int(count) < min_expected:
                 failures.append(
                     f"Table {table_name} has {count} rows, expected >= {min_expected}"
@@ -129,4 +131,9 @@ with DAG(
     )
 
     setup_db >> [load_grid, load_provinces]
-    chain([load_grid, load_provinces], [load_traffic, load_mobility], data_quality_checks, validate_top_cells)
+    chain(
+        [load_grid, load_provinces],
+        [load_traffic, load_mobility],
+        data_quality_checks,
+        validate_top_cells,
+    )

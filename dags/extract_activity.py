@@ -1,6 +1,6 @@
 # dags/milan_telecom_etl_production.py
 """
-Production ETL Pipeline: Fetch Milan Telecom data from LOCAL SERVER via SSH 
+Production ETL Pipeline: Fetch Milan Telecom data from LOCAL SERVER via SSH
 → Transform with existing src/ modules → Load to Azure PostgreSQL
 
 Tags: etl, milan, telecom, ssh, production, azure
@@ -40,14 +40,18 @@ TEMP_DATA_DIR = Path(os.getenv("TEMP_DATA_DIR", "/tmp/milan-telecom-data"))
 
 # Paramètres SSH pour la connexion au serveur local
 SSH_CONN_ID = os.getenv("SSH_CONN_ID", "local_data_server")
-REMOTE_DATA_PATH = os.getenv("REMOTE_DATA_PATH", "/srv/telecom-data")  # Chemin sur le serveur local
+REMOTE_DATA_PATH = os.getenv(
+    "REMOTE_DATA_PATH", "/srv/telecom-data"
+)  # Chemin sur le serveur local
 
 default_args = {
     "owner": "data-eng",
     "depends_on_past": False,
     "retries": 2,
     "retry_delay": timedelta(minutes=5),
-    "on_failure_callback": lambda context: logger.error(f"Pipeline failed: {context['task_instance']}"),
+    "on_failure_callback": lambda context: logger.error(
+        f"Pipeline failed: {context['task_instance']}"
+    ),
 }
 
 
@@ -55,18 +59,19 @@ default_args = {
 # TASKS
 # ─────────────────────────────────────
 
+
 def fetch_remote_data_task(**context) -> None:
     """
     Fetch CSV files from LOCAL SERVER via SSH/SFTP → Save to TEMP_DATA_DIR
     This task runs BEFORE the existing ETL functions.
     """
     logger.info(f"🔄 Fetching data from {REMOTE_DATA_PATH} via SSH...")
-    
+
     # Créer le dossier temporaire si nécessaire
     TEMP_DATA_DIR.mkdir(parents=True, exist_ok=True)
-    
+
     ssh_hook = SSHHook(ssh_conn_id=SSH_CONN_ID)
-    
+
     try:
         with ssh_hook.get_conn() as ssh_client:
             # Lister les fichiers CSV disponibles
@@ -74,31 +79,37 @@ def fetch_remote_data_task(**context) -> None:
                 f'find "{REMOTE_DATA_PATH}" -name "*.csv" -type f 2>/dev/null'
             )
             remote_files = [f.strip() for f in stdout.readlines() if f.strip()]
-            
+
             if not remote_files:
                 logger.warning(f"⚠️ Aucun fichier CSV trouvé dans {REMOTE_DATA_PATH}")
                 return
-            
+
             logger.info(f"📁 {len(remote_files)} fichier(s) trouvé(s) à distance")
-            
+
             # Télécharger chaque fichier (avec limite pour les tests)
             downloaded_count = 0
-            for remote_path in remote_files[:10]:  # Limite à 10 fichiers pour éviter le timeout
+            for remote_path in remote_files[
+                :10
+            ]:  # Limite à 10 fichiers pour éviter le timeout
                 filename = Path(remote_path).name
                 local_path = TEMP_DATA_DIR / filename
-                
+
                 # Utiliser SFTP pour le transfert (plus fiable pour les gros fichiers)
                 sftp = ssh_client.open_sftp()
                 sftp.get(remote_path, str(local_path))
                 sftp.close()
-                
-                logger.info(f"✅ Downloaded: {filename} ({local_path.stat().st_size / 1024 / 1024:.2f} MB)")
+
+                logger.info(
+                    f"✅ Downloaded: {filename} ({local_path.stat().st_size / 1024 / 1024:.2f} MB)"
+                )
                 downloaded_count += 1
-            
+
             # Stocker le chemin dans XCom pour les tâches suivantes
-            context['ti'].xcom_push(key='data_dir', value=str(TEMP_DATA_DIR))
-            logger.info(f"🎯 {downloaded_count} fichier(s) téléchargé(s) dans {TEMP_DATA_DIR}")
-            
+            context["ti"].xcom_push(key="data_dir", value=str(TEMP_DATA_DIR))
+            logger.info(
+                f"🎯 {downloaded_count} fichier(s) téléchargé(s) dans {TEMP_DATA_DIR}"
+            )
+
     except Exception as e:
         logger.error(f"❌ Erreur lors du fetch SSH: {e}")
         raise AirflowFailException(f"SSH fetch failed: {e}")
@@ -116,9 +127,9 @@ def load_traffic_data_with_path(**context) -> None:
     """
     Wrapper autour de load_traffic_data() pour injecter le chemin des données fetchées.
     """
-    ti = context['ti']
-    data_dir = ti.xcom_pull(key='data_dir', task_ids='fetch_remote_data')
-    
+    ti = context["ti"]
+    data_dir = ti.xcom_pull(key="data_dir", task_ids="fetch_remote_data")
+
     if data_dir:
         logger.info(f"📊 Loading traffic data from {data_dir}")
         # Injecter le chemin dans l'environnement ou passer en paramètre
@@ -132,9 +143,9 @@ def load_traffic_data_with_path(**context) -> None:
 
 def load_mobility_data_with_path(**context) -> None:
     """Wrapper autour de load_mobility_data() avec injection du chemin."""
-    ti = context['ti']
-    data_dir = ti.xcom_pull(key='data_dir', task_ids='fetch_remote_data')
-    
+    ti = context["ti"]
+    data_dir = ti.xcom_pull(key="data_dir", task_ids="fetch_remote_data")
+
     if data_dir:
         logger.info(f"🚗 Loading mobility data from {data_dir}")
         load_mobility_data(data_dir=str(data_dir), limit_files=None)
@@ -146,7 +157,7 @@ def load_mobility_data_with_path(**context) -> None:
 def data_quality_checks_task() -> None:
     """Vérifications de qualité des données après chargement."""
     logger.info("🔍 Running data quality checks...")
-    
+
     engine = get_sqlalchemy_engine()
     failures = []
 
@@ -159,7 +170,9 @@ def data_quality_checks_task() -> None:
 
     with engine.begin() as conn:
         for table_name, min_expected in critical_counts.items():
-            count = conn.execute(text(f"SELECT COUNT(*) FROM {table_name}")).scalar_one()
+            count = conn.execute(
+                text(f"SELECT COUNT(*) FROM {table_name}")
+            ).scalar_one()
             if int(count) < min_expected:
                 failures.append(
                     f"Table {table_name} has {count} rows, expected >= {min_expected}"
@@ -212,57 +225,54 @@ with DAG(
     max_active_runs=1,
     tags=["etl", "milan", "telecom", "ssh", "production", "azure"],
 ) as dag:
-    
+
     # 1. Fetch des données depuis le serveur local (NOUVELLE TÂCHE)
     fetch_data = PythonOperator(
         task_id="fetch_remote_data",
         python_callable=fetch_remote_data_task,
-        provide_context=True,
     )
-    
+
     # 2. Setup de la base de données (existant)
     setup_db = PythonOperator(
         task_id="setup_database",
         python_callable=setup_database_task,
     )
-    
+
     # 3. Chargement des géométries (existant)
     load_grid = PythonOperator(
         task_id="load_grid_geometries",
         python_callable=load_grid_geometries,
     )
-    
+
     load_provinces = PythonOperator(
         task_id="load_provinces_geometries",
         python_callable=load_provinces_geometries,
     )
-    
+
     # 4. Chargement des données métier (adapté avec chemin dynamique)
     load_traffic = PythonOperator(
         task_id="load_traffic_data",
         python_callable=load_traffic_data_with_path,
-        provide_context=True,
         op_kwargs={"limit_files": None},
     )
-    
+
     load_mobility = PythonOperator(
         task_id="load_mobility_data",
         python_callable=load_mobility_data_with_path,
-        provide_context=True,
         op_kwargs={"limit_files": None},
     )
-    
+
     # 5. Validation et qualité des données (existant)
     data_quality_checks = PythonOperator(
         task_id="data_quality_checks",
         python_callable=data_quality_checks_task,
     )
-    
+
     validate_top_cells = PythonOperator(
         task_id="validate_top_cells",
         python_callable=validate_top_cells_task,
     )
-    
+
     # ─────────────────────────────────────
     # DÉPENDANCES DES TÂCHES
     # ─────────────────────────────────────
@@ -270,8 +280,8 @@ with DAG(
     # puis chargement des données, puis validation
     fetch_data >> setup_db
     fetch_data >> [load_grid, load_provinces]
-    
+
     setup_db >> [load_traffic, load_mobility]
     [load_grid, load_provinces] >> [load_traffic, load_mobility]
-    
+
     chain([load_traffic, load_mobility], data_quality_checks, validate_top_cells)

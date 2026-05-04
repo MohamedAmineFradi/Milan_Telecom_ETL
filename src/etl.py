@@ -3,6 +3,7 @@ import pandas as pd
 import logging
 import unicodedata
 import uuid
+from pathlib import Path
 from sqlalchemy import text
 from .config import DATA_DIR, MILANO_GRID_FILE, PROVINCES_FILE, ISTAT_FILE, TRAFFIC_PATTERN, MOBILITY_PATTERN, TARGET_CRS
 from .database import get_sqlalchemy_engine
@@ -272,12 +273,13 @@ def load_provinces_geometries():
         raise
 
 
-def load_traffic_data(file_pattern=None, limit_files=None):
+def load_traffic_data(file_pattern=None, limit_files=None, data_dir=None):
     try:
         engine = get_sqlalchemy_engine()
 
         pattern = file_pattern or TRAFFIC_PATTERN
-        csv_files = sorted(DATA_DIR.glob(pattern))
+        base_dir = Path(data_dir) if data_dir else DATA_DIR
+        csv_files = sorted(base_dir.glob(pattern))
         
         if limit_files:
             csv_files = csv_files[:limit_files]
@@ -350,12 +352,13 @@ def load_traffic_data(file_pattern=None, limit_files=None):
         raise
 
 
-def load_mobility_data(file_pattern=None, limit_files=None):
+def load_mobility_data(file_pattern=None, limit_files=None, data_dir=None):
     try:
         engine = get_sqlalchemy_engine()
 
         pattern = file_pattern or MOBILITY_PATTERN
-        csv_files = sorted(DATA_DIR.glob(pattern))
+        base_dir = Path(data_dir) if data_dir else DATA_DIR
+        csv_files = sorted(base_dir.glob(pattern))
         
         if limit_files:
             csv_files = csv_files[:limit_files]

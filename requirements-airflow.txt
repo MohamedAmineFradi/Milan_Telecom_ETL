@@ -4,3 +4,4 @@ fiona>=1.9.5
 pandas==2.1.4
 geoalchemy2==0.14.7
 python-dotenv==1.0.1
+apache-airflow-providers-ssh
